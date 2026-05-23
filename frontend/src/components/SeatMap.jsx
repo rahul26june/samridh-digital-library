@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { apiFetch } from '../apiClient.js';
 import { Armchair, AlertCircle, CheckCircle, Info, LogIn } from 'lucide-react';
 
 const SeatMap = ({ setCurrentView }) => {
@@ -21,7 +22,7 @@ const SeatMap = ({ setCurrentView }) => {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const res = await fetch('/api/seats', { headers });
+      const res = await apiFetch('/api/seats', { headers });
       if (res.ok) {
         const data = await res.json();
         setSeats(data);
@@ -91,7 +92,7 @@ const SeatMap = ({ setCurrentView }) => {
   const executeBook = async () => {
     if (!selectedSeat) return;
     try {
-      const res = await fetch(`/api/seats/${selectedSeat.id}/book`, {
+      const res = await apiFetch(`/api/seats/${selectedSeat.id}/book`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -117,7 +118,7 @@ const SeatMap = ({ setCurrentView }) => {
   const executeCancel = async () => {
     if (!selectedSeat) return;
     try {
-      const res = await fetch(`/api/seats/${selectedSeat.id}/cancel`, {
+      const res = await apiFetch(`/api/seats/${selectedSeat.id}/cancel`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

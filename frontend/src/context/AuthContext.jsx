@@ -1,4 +1,5 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
+import { apiFetch } from '../apiClient.js';
 
 const AuthContext = createContext();
 
@@ -19,7 +20,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       try {
-        const res = await fetch('/api/auth/me', {
+        const res = await apiFetch('/api/auth/me', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -47,7 +48,7 @@ export const AuthProvider = ({ children }) => {
   const register = async (name, phone, email, password) => {
     setError(null);
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await apiFetch('/api/auth/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -72,7 +73,7 @@ export const AuthProvider = ({ children }) => {
   const login = async (phone, password) => {
     setError(null);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -108,7 +109,7 @@ export const AuthProvider = ({ children }) => {
   const updateProfile = async (name, email, password) => {
     setError(null);
     try {
-      const res = await fetch('/api/users/profile', {
+      const res = await apiFetch('/api/users/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { apiFetch } from '../apiClient.js';
 import { UserCheck, Users, Armchair, Trash2, Edit, Check, X, AlertCircle, Plus } from 'lucide-react';
 
 const AdminDashboard = () => {
@@ -28,7 +29,7 @@ const AdminDashboard = () => {
   const fetchData = async () => {
     try {
       // 1. Fetch Users
-      const usersRes = await fetch('/api/users', {
+      const usersRes = await apiFetch('/api/users', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (usersRes.ok) {
@@ -37,7 +38,7 @@ const AdminDashboard = () => {
       }
 
       // 2. Fetch Seats
-      const seatsRes = await fetch('/api/seats', {
+      const seatsRes = await apiFetch('/api/seats', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (seatsRes.ok) {
@@ -58,7 +59,7 @@ const AdminDashboard = () => {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`/api/users/${userId}/approve`, {
+      const res = await apiFetch(`/api/users/${userId}/approve`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -81,7 +82,7 @@ const AdminDashboard = () => {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`/api/users/${userId}`, {
+      const res = await apiFetch(`/api/users/${userId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -106,7 +107,7 @@ const AdminDashboard = () => {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch('/api/seats/row', {
+      const res = await apiFetch('/api/seats/row', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -135,7 +136,7 @@ const AdminDashboard = () => {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`/api/seats/row/${rowName}`, {
+      const res = await apiFetch(`/api/seats/row/${rowName}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -202,7 +203,7 @@ const AdminDashboard = () => {
     }
 
     try {
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { apiFetch } from '../apiClient.js';
 import { User, Mail, Phone, Key, AlertCircle, CheckCircle, Armchair, HelpCircle } from 'lucide-react';
 
 const UserProfile = () => {
@@ -23,7 +24,7 @@ const UserProfile = () => {
   // Fetch current bookings to find if this user has booked a seat
   const fetchMyBookings = async () => {
     try {
-      const res = await fetch('/api/seats', {
+      const res = await apiFetch('/api/seats', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -51,7 +52,7 @@ const UserProfile = () => {
     }
 
     try {
-      const res = await fetch(`/api/seats/${mySeat.id}/cancel`, {
+      const res = await apiFetch(`/api/seats/${mySeat.id}/cancel`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
