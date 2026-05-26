@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { apiFetch } from '../apiClient.js';
+import { validateName, validateEmail, validatePassword, validateProfile } from '../utils/validators.js';
 import { User, Mail, Phone, Key, AlertCircle, CheckCircle, Armchair, HelpCircle } from 'lucide-react';
 
 const UserProfile = () => {
@@ -11,6 +12,7 @@ const UserProfile = () => {
   const [loading, setLoading] = useState(false);
   const [errMessage, setErrMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [mySeat, setMySeat] = useState(null);
 
   // Sync user state
@@ -72,14 +74,22 @@ const UserProfile = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const validation = validateProfile(name, email, password);
+    if (!validation.valid) {
+      setFieldErrors(validation.errors);
+      setErrMessage('Please correct the highlighted fields before saving.');
+      return;
+    }
+
+    setFieldErrors({});
     setErrMessage('');
     setSuccessMessage('');
     setLoading(true);
 
     try {
-      await updateProfile(name, email, password);
+      await updateProfile(name.trim(), email.trim(), password);
       setSuccessMessage('Profile updated successfully!');
-      setPassword(''); // Clear password field
+      setPassword('');
     } catch (err) {
       setErrMessage(err.message || 'Failed to update profile.');
     } finally {
@@ -131,12 +141,23 @@ const UserProfile = () => {
             <input
               type="text"
               id="profile-name"
-              className="form-control"
+              className={`form-control ${fieldErrors.name ? 'input-error' : ''}`}
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (fieldErrors.name) {
+                  setFieldErrors(prev => ({ ...prev, name: '' }));
+                }
+              }}
               required
               disabled={loading}
             />
+            {fieldErrors.name && (
+              <div className="field-error">
+                <AlertCircle size={14} style={{ marginRight: '4px' }} />
+                {fieldErrors.name}
+              </div>
+            )}
           </div>
 
           <div className="form-group">
@@ -147,11 +168,22 @@ const UserProfile = () => {
             <input
               type="email"
               id="profile-email"
-              className="form-control"
+              className={`form-control ${fieldErrors.email ? 'input-error' : ''}`}
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (fieldErrors.email) {
+                  setFieldErrors(prev => ({ ...prev, email: '' }));
+                }
+              }}
               disabled={loading}
             />
+            {fieldErrors.email && (
+              <div className="field-error">
+                <AlertCircle size={14} style={{ marginRight: '4px' }} />
+                {fieldErrors.email}
+              </div>
+            )}
           </div>
 
           <div className="form-group" style={{ marginBottom: '2rem' }}>
@@ -162,12 +194,23 @@ const UserProfile = () => {
             <input
               type="password"
               id="profile-password"
-              className="form-control"
+              className={`form-control ${fieldErrors.password ? 'input-error' : ''}`}
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (fieldErrors.password) {
+                  setFieldErrors(prev => ({ ...prev, password: '' }));
+                }
+              }}
               disabled={loading}
             />
+            {fieldErrors.password && (
+              <div className="field-error">
+                <AlertCircle size={14} style={{ marginRight: '4px' }} />
+                {fieldErrors.password}
+              </div>
+            )}
           </div>
 
           <button

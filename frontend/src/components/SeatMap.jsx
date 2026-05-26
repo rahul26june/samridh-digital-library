@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { apiFetch } from '../apiClient.js';
-import { Armchair, AlertCircle, CheckCircle, Info, LogIn } from 'lucide-react';
+import { AirVent, Armchair, AlertCircle, CheckCircle, Circle, Fan, XCircle, Info, LogIn } from 'lucide-react';
 
 const SeatMap = ({ setCurrentView }) => {
   const { user, token } = useAuth();
@@ -9,10 +10,48 @@ const SeatMap = ({ setCurrentView }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  const getBookingUserId = (seat, shift) => {
+    return seat.bookedBy?.[shift]?.id || seat.bookedBy?.id || null;
+  };
+
+  const getSeatBookedShifts = (seat) => {
+    return Array.isArray(seat.bookedShifts) ? seat.bookedShifts : [];
+  };
+
+  const getSeatClass = (seat) => {
+    const bookedShifts = getSeatBookedShifts(seat);
+    if (bookedShifts.length === 0) return 'available';
+
+    const mine = user && bookedShifts.some((shift) => getBookingUserId(seat, shift) === user.id);
+    if (mine) return 'mine';
+    if (bookedShifts.length === 1) return 'partial';
+    return 'booked';
+  };
+
+  const getSeatStatus = (seat) => {
+    const bookedShifts = getSeatBookedShifts(seat);
+    if (bookedShifts.includes('full') || bookedShifts.length === 2) {
+      return 'Fully booked';
+    }
+    if (bookedShifts.length === 1) {
+      return 'Partially booked';
+    }
+    return 'Available';
+  };
+
+  const getSeatIcon = (seatClass) => {
+    // Use the Armchair icon for all seat visuals (colored by CSS state)
+    return <Armchair size={18} />;
+  };
   
   // Modal states
   const [selectedSeat, setSelectedSeat] = useState(null);
   const [modalType, setModalType] = useState(''); // 'book', 'cancel-mine', 'cancel-admin'
+  const [selectedShift, setSelectedShift] = useState('full');
+  // Tooltip portal state
+  const [tooltipSeat, setTooltipSeat] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0, visible: false });
 
   // Fetch seats data
   const fetchSeats = async () => {
@@ -61,57 +100,93 @@ const SeatMap = ({ setCurrentView }) => {
     setError('');
     setSuccess('');
 
-    // 1. Guest flow
+    const bookedShifts = getSeatBookedShifts(seat);
+    const availableShifts = ['morning', 'evening'].filter((shift) => !bookedShifts.includes(shift));
+    const fullyBooked = availableShifts.length === 0;
+    const userOwnsSeat = user && bookedShifts.some((shift) => getBookingUserId(seat, shift) === user.id);
+
     if (!user) {
-      setModalType('guest-prompt');
       setSelectedSeat(seat);
+      setModalType(fullyBooked ? 'guest-booked-details' : 'guest-prompt');
       return;
     }
 
-    // 2. Available seat -> Book
-    if (seat.status === 'available') {
-      setSelectedSeat(seat);
-      setModalType('book');
-      return;
-    }
-
-    // 3. Booked seat -> Cancel (depends on owner / admin status)
-    if (seat.status === 'booked') {
-      if (seat.bookedBy && seat.bookedBy.id === user.id) {
-        // Mine
-        setSelectedSeat(seat);
-        setModalType('cancel-mine');
-      } else if (user.role === 'admin') {
-        // Admin cancels user's booking
+    if (fullyBooked) {
+      if (user.role === 'admin') {
         setSelectedSeat(seat);
         setModalType('cancel-admin');
+        return;
       }
+
+      if (userOwnsSeat) {
+        setSelectedSeat(seat);
+        setModalType('cancel-mine');
+        return;
+      }
+
+      setSelectedSeat(seat);
+      setModalType('guest-booked-details');
+      return;
     }
+
+    // If the current user already has a booking on another seat, open change-request modal
+    const currentUserSeat = getCurrentUserSeat();
+    if (currentUserSeat && currentUserSeat.id !== seat.id && user.role !== 'admin') {
+      const userBookedShifts = getSeatBookedShifts(currentUserSeat).filter((s) => getBookingUserId(currentUserSeat, s) === user.id);
+      const possibleShifts = userBookedShifts.filter((s) => availableShifts.includes(s));
+
+      // If no matching shift is available on target seat, show details instead
+      if (!possibleShifts.length) {
+        setSelectedSeat(seat);
+        setModalType('guest-booked-details');
+        return;
+      }
+
+      setSelectedSeat(seat);
+      setSelectedShift(possibleShifts.length === 2 ? 'full' : possibleShifts[0]);
+      setModalType('change-request');
+      return;
+    }
+
+    // Open booking modal for available shift(s)
+    setSelectedSeat(seat);
+    if (bookedShifts.length === 0) {
+      setSelectedShift(availableShifts[0] || 'morning');
+    } else {
+      setSelectedShift(availableShifts[0]);
+    }
+    setModalType('book');
   };
 
   const executeBook = async () => {
     if (!selectedSeat) return;
     try {
+      const body = { shift: selectedShift || 'full' };
       const res = await apiFetch(`/api/seats/${selectedSeat.id}/book`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
-        }
+        },
+        body: JSON.stringify(body)
       });
       const data = await res.json();
 
       if (res.ok) {
         setSuccess(data.message);
-        fetchSeats();
+        // Wait for seats to be fetched and state to update before closing modal
+        await fetchSeats();
+        // Small delay to ensure UI updates
+        setTimeout(() => {
+          setSelectedSeat(null);
+          setModalType('');
+          setSelectedShift('full');
+        }, 500);
       } else {
         setError(data.message || 'Failed to book seat');
       }
     } catch (err) {
       setError('Connection error. Failed to book seat.');
-    } finally {
-      setSelectedSeat(null);
-      setModalType('');
     }
   };
 
@@ -129,23 +204,46 @@ const SeatMap = ({ setCurrentView }) => {
 
       if (res.ok) {
         setSuccess(data.message);
-        fetchSeats();
+        // Wait for seats to be fetched and state to update before closing modal
+        await fetchSeats();
+        // Small delay to ensure UI updates
+        setTimeout(() => {
+          setSelectedSeat(null);
+          setModalType('');
+          setSelectedShift('full');
+        }, 500);
       } else {
         setError(data.message || 'Failed to cancel booking');
       }
     } catch (err) {
       setError('Connection error. Failed to release seat.');
-    } finally {
-      setSelectedSeat(null);
-      setModalType('');
     }
   };
 
-  const getSeatClass = (seat) => {
-    if (seat.status === 'available') return 'available';
-    if (user && seat.bookedBy && seat.bookedBy.id === user.id) return 'mine';
-    return 'booked';
+  const getCurrentUserSeat = () => seats.find((s) => {
+    if (!user) return false;
+    return (
+      (s.bookedBy?.morning?.id === user.id) ||
+      (s.bookedBy?.evening?.id === user.id) ||
+      (s.bookedBy?.id === user.id)
+    );
+  });
+
+  const formatBookingTime = (timestamp) => {
+    if (!timestamp) return '';
+    try {
+      return new Date(timestamp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return timestamp;
+    }
   };
+
+  const shiftLabel = {
+    morning: 'Morning (7am - 1pm)',
+    evening: 'Evening (2pm - 8pm)'
+  };
+
+  const currentUserSeat = getCurrentUserSeat();
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: '3rem' }}>Loading layout map...</div>;
@@ -153,10 +251,9 @@ const SeatMap = ({ setCurrentView }) => {
 
   return (
     <div className="glass-card">
-      <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }} className="gradient-text">Interactive Layout Map</h2>
-      <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: '0.9rem', marginBottom: '2rem' }}>
-        Hover over seats to view booking details (requires login). Click any seat to manage booking.
-      </p>
+      <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: '0.82rem', marginBottom: '1rem' }}>
+        Hover seats for details (login required). Click a seat to manage booking.
+      </p> 
 
       {error && (
         <div className="alert alert-danger" style={{ maxWidth: '600px', margin: '0 auto 1.5rem auto' }}>
@@ -175,103 +272,99 @@ const SeatMap = ({ setCurrentView }) => {
       {/* Legend */}
       <div className="legend-container">
         <div className="legend-item">
-          <div className="legend-color legend-available"></div>
+          <Armchair size={16} className="legend-icon legend-available" />
           <span>Available</span>
         </div>
         <div className="legend-item">
-          <div className="legend-color legend-booked"></div>
-          <span>Booked</span>
+          <Armchair size={16} className="legend-icon legend-partial" />
+          <span>Partially Booked</span>
+        </div>
+        <div className="legend-item">
+          <Armchair size={16} className="legend-icon legend-booked" />
+          <span>Fully Booked</span>
+        </div>
+        <div className="legend-item">
+          <XCircle size={16} className="legend-icon legend-booked" />
+          <span>Fully Booked</span>
         </div>
         {user && (
           <div className="legend-item">
-            <div className="legend-color legend-mine"></div>
-            <span>My Reservation</span>
+            <CheckCircle size={16} className="legend-icon legend-mine" />
+            <span>Mine</span>
           </div>
         )}
       </div>
 
       {/* Grid Container */}
       <div className="seat-map-container">
+        
         <div className="screen-indicator"></div>
-
-        <div className="seat-grid">
+          
+        <div className="seat-grid-wrapper">
+         
+        <div className="seat-grid-horizontal">
           {Object.keys(seatsByRow).length === 0 ? (
             <div style={{ textAlign: 'center', color: '#6b7280', padding: '2rem' }}>
               No rows defined yet. Admin can generate rows in the Admin Dashboard.
             </div>
           ) : (
             Object.keys(seatsByRow).sort().map(rowName => (
-              <div className="seat-row" key={rowName}>
+              <div className="seat-column" key={rowName}>
                 <div className="row-label">{rowName}</div>
-                {seatsByRow[rowName].map(seat => {
-                  const seatClass = getSeatClass(seat);
-                  const isMine = seatClass === 'mine';
-                  return (
-                    <div 
-                      key={seat.id}
-                      className={`seat-item ${seatClass}`}
-                      onClick={() => handleSeatClick(seat)}
-                    >
-                      <div className="seat-icon-wrapper">
-                        <Armchair size={22} fill={seat.status === 'booked' ? 'currentColor' : 'none'} />
-                      </div>
-                      <span className="seat-number">{seat.number}</span>
+                <div className="seat-column-scroll">
+                  {seatsByRow[rowName].map(seat => {
+                    const seatClass = getSeatClass(seat);
+                    const isMine = seatClass === 'mine';
+                    const anyBooked = seat.bookedShifts && seat.bookedShifts.length > 0;
+                    const onEnter = (e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const top = rect.top + window.scrollY - 12; // a little above
+                      const left = rect.left + window.scrollX + rect.width / 2;
+                      setTooltipSeat(seat);
+                      setTooltipPos({ top, left, visible: true });
+                    };
 
-                      {/* Seat details Hover Tooltip */}
-                      <div className="seat-tooltip">
-                        <div className="tooltip-title">Seat {seat.row}{seat.number}</div>
-                        <div className="tooltip-row">
-                          <span>Status:</span>
-                          <span 
-                            className="tooltip-val"
-                            style={{ color: seat.status === 'available' ? '#34d399' : '#f87171' }}
-                          >
-                            {seat.status === 'available' ? 'Available' : 'Booked'}
-                          </span>
+                    const onLeave = () => {
+                      setTooltipPos({ top: 0, left: 0, visible: false });
+                      setTooltipSeat(null);
+                    };
+
+                    return (
+                      <div 
+                        key={seat.id}
+                        className={`seat-item ${seatClass}`}
+                        onClick={() => handleSeatClick(seat)}
+                        onMouseEnter={onEnter}
+                        onMouseLeave={onLeave}
+                      >
+                        <div className="seat-icon-wrapper">
+                          {getSeatIcon(seatClass)}
                         </div>
-                        {seat.status === 'booked' && (
-                          <>
-                            {seat.bookedBy ? (
-                              <>
-                                <div className="tooltip-row" style={{ marginTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.4rem' }}>
-                                  <span>User:</span>
-                                  <span className="tooltip-val">{isMine ? 'You' : seat.bookedBy.name}</span>
-                                </div>
-                                <div className="tooltip-row">
-                                  <span>Phone:</span>
-                                  <span className="tooltip-val">{seat.bookedBy.phone}</span>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="tooltip-row" style={{ marginTop: '0.4rem', color: '#6b7280', fontStyle: 'italic', fontSize: '0.7rem' }}>
-                                Login to see occupant
-                              </div>
-                            )}
-                          </>
-                        )}
+                        <span className="seat-number">{seat.number}</span>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             ))
           )}
+        </div>
         </div>
       </div>
 
       {/* Confirmation Modals */}
       {selectedSeat && modalType && (
-        <div className="modal-overlay" onClick={() => { setSelectedSeat(null); setModalType(''); }}>
+        <div className="modal-overlay" onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 className="modal-title">Seat {selectedSeat.row}{selectedSeat.number}</h3>
-              <button className="modal-close" onClick={() => { setSelectedSeat(null); setModalType(''); }}>&times;</button>
+              <button className="modal-close" onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}>&times;</button>
             </div>
 
             {modalType === 'guest-prompt' && (
               <div>
                 <p style={{ color: '#9ca3af', marginBottom: '1.5rem' }}>
-                  You must be logged in to book seats or view occupant details.
+                  You must be logged in to book seats.
                 </p>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                   <button 
@@ -289,7 +382,7 @@ const SeatMap = ({ setCurrentView }) => {
                   <button 
                     className="btn btn-secondary" 
                     style={{ flex: 1 }}
-                    onClick={() => { setSelectedSeat(null); setModalType(''); }}
+                    onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}
                   >
                     Close
                   </button>
@@ -297,11 +390,133 @@ const SeatMap = ({ setCurrentView }) => {
               </div>
             )}
 
+            {modalType === 'guest-booked-details' && (
+              <div>
+                <p style={{ color: '#9ca3af', marginBottom: '1rem' }}>
+                  This seat is currently reserved. Login to see booking details and manage your reservation.
+                </p>
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
+                  <div className="tooltip-row">
+                    <span>Status:</span>
+                    <span className="tooltip-val">{getSeatStatus(selectedSeat)}</span>
+                  </div>
+                  <div className="tooltip-row" style={{ marginTop: '0.5rem' }}>
+                    <span>Morning:</span>
+                    <span className="tooltip-val">{(selectedSeat.bookedShifts || []).includes('morning') ? 'Booked' : 'Available'}</span>
+                  </div>
+                  <div className="tooltip-row">
+                    <span>Evening:</span>
+                    <span className="tooltip-val">{(selectedSeat.bookedShifts || []).includes('evening') ? 'Booked' : 'Available'}</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <button 
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                    onClick={() => {
+                      setSelectedSeat(null);
+                      setModalType('');
+                      setCurrentView('login');
+                    }}
+                  >
+                    <LogIn size={16} />
+                    Login to Manage
+                  </button>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ flex: 1 }}
+                    onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+
+
+            {modalType === 'change-request' && (
+              <div>
+                <p style={{ color: '#9ca3af', marginBottom: '1rem' }}>
+                  You already have an active booking. Sending this request will ask admin to move your reservation to seat <strong>{selectedSeat.row}{selectedSeat.number}</strong>.
+                </p>
+
+                {currentUserSeat ? (
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.35rem' }}>Your current booking</div>
+                    <div className="tooltip-row">
+                      <span>Seat:</span>
+                      <span className="tooltip-val">{currentUserSeat.row}{currentUserSeat.number}</span>
+                    </div>
+                    <div className="tooltip-row">
+                      <span>Shift(s):</span>
+                      <span className="tooltip-val">{(currentUserSeat.bookedShifts || []).filter(s => currentUserSeat.bookedBy?.[s]?.id === user?.id).join(', ') || 'Unknown'}</span>
+                    </div>
+                    <div className="tooltip-row">
+                      <span>Booked at:</span>
+                      <span className="tooltip-val">{(() => {
+                        const shifts = (currentUserSeat.bookedShifts || []).filter(s => currentUserSeat.bookedBy?.[s]?.id === user?.id);
+                        if (!shifts.length) return '';
+                        // show earliest booking time among selected shifts
+                        const times = shifts.map(s => currentUserSeat.bookedAt?.[s]).filter(Boolean);
+                        return times.length ? formatBookingTime(times[0]) : '';
+                      })()}</span>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.85rem', color: '#9ca3af', minWidth: '80px' }}>Select Shift:</label>
+                  <select className="form-control custom-select" value={selectedShift} onChange={(e) => setSelectedShift(e.target.value)}>
+                    {(['morning', 'evening'].filter((shift) => !selectedSeat?.bookedShifts?.includes(shift))).map((shift) => (
+                      <option key={shift} value={shift}>{shift === 'morning' ? 'Morning (7am-1pm)' : 'Evening (2pm-8pm)'}</option>
+                    ))}
+                    {/* If user holds both shifts and both are available, allow full-day request */}
+                    {(() => {
+                      const userShifts = (currentUserSeat?.bookedShifts || []).filter(s => currentUserSeat?.bookedBy?.[s]?.id === user?.id);
+                      const available = (['morning','evening'].every(s => !selectedSeat?.bookedShifts?.includes(s)));
+                      if (userShifts.length === 2 && available) {
+                        return <option value="full">Full Day (move both)</option>;
+                      }
+                      return null;
+                    })()}
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { executeBook(); setSelectedShift('full'); }}>
+                    Request Change
+                  </button>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ flex: 1 }}
+                    onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+
+
             {modalType === 'book' && (
               <div>
-                <p style={{ color: '#9ca3af', marginBottom: '1.5rem' }}>
-                  Would you like to book seat <strong>{selectedSeat.row}{selectedSeat.number}</strong>?
+                <p style={{ color: '#9ca3af', marginBottom: '1rem' }}>
+                  Book seat <strong>{selectedSeat.row}{selectedSeat.number}</strong>
                 </p>
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.85rem', color: '#9ca3af', minWidth: '80px' }}>Select Shift:</label>
+                  <select className="form-control custom-select" value={selectedShift} onChange={(e) => setSelectedShift(e.target.value)}>
+                    {(!selectedSeat?.bookedShifts || selectedSeat.bookedShifts.length === 0) && (
+                      <option value="full">Full Day (7am-9pm)</option>
+                    )}
+                    {['morning', 'evening']
+                      .filter((shift) => !selectedSeat?.bookedShifts?.includes(shift))
+                      .map((shift) => (
+                        <option key={shift} value={shift}>{shift === 'morning' ? 'Morning(7am-1pm)' : 'Evening(2pm-8pm)'}</option>
+                      ))}
+                  </select>
+                </div>
                 {user && user.role !== 'admin' && (
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '0.5rem', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: '8px', fontSize: '0.8rem', color: '#fbbf24', marginBottom: '1.5rem' }}>
                     <Info size={14} style={{ flexShrink: 0 }} />
@@ -309,13 +524,13 @@ const SeatMap = ({ setCurrentView }) => {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={executeBook}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { executeBook(); setSelectedShift('full'); }}>
                     Book Now
                   </button>
                   <button 
                     className="btn btn-secondary" 
                     style={{ flex: 1 }}
-                    onClick={() => { setSelectedSeat(null); setModalType(''); }}
+                    onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}
                   >
                     Cancel
                   </button>
@@ -335,7 +550,7 @@ const SeatMap = ({ setCurrentView }) => {
                   <button 
                     className="btn btn-secondary" 
                     style={{ flex: 1 }}
-                    onClick={() => { setSelectedSeat(null); setModalType(''); }}
+                    onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}
                   >
                     Keep Booking
                   </button>
@@ -349,9 +564,24 @@ const SeatMap = ({ setCurrentView }) => {
                   This seat is booked by:
                 </p>
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>
-                  <div style={{ fontSize: '0.95rem', fontWeight: '600' }}>{selectedSeat.bookedBy?.name}</div>
-                  <div style={{ fontSize: '0.85rem', color: '#9ca3af', marginTop: '0.2rem' }}>Phone: {selectedSeat.bookedBy?.phone}</div>
-                  {selectedSeat.bookedBy?.email && <div style={{ fontSize: '0.85rem', color: '#9ca3af' }}>Email: {selectedSeat.bookedBy?.email}</div>}
+                  {selectedSeat.bookedBy?.morning ? (
+                    <div style={{ marginBottom: '0.5rem' }}>
+                      <div style={{ fontSize: '0.95rem', fontWeight: '600' }}>{selectedSeat.bookedBy.morning.name} (Morning)</div>
+                      <div style={{ fontSize: '0.85rem', color: '#9ca3af' }}>Phone: {selectedSeat.bookedBy.morning.phone}</div>
+                      {selectedSeat.bookedBy.morning.email && <div style={{ fontSize: '0.85rem', color: '#9ca3af' }}>Email: {selectedSeat.bookedBy.morning.email}</div>}
+                    </div>
+                  ) : null}
+
+                  {selectedSeat.bookedBy?.evening ? (
+                    <div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: '600' }}>{selectedSeat.bookedBy.evening.name} (Evening)</div>
+                      <div style={{ fontSize: '0.85rem', color: '#9ca3af' }}>Phone: {selectedSeat.bookedBy.evening.phone}</div>
+                      {selectedSeat.bookedBy.evening.email && <div style={{ fontSize: '0.85rem', color: '#9ca3af' }}>Email: {selectedSeat.bookedBy.evening.email}</div>}
+                    </div>
+                  ): null}
+                  {!selectedSeat.bookedBy?.morning && !selectedSeat.bookedBy?.evening && (
+                    <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>No bookings on this seat.</div>
+                  )}
                 </div>
                 <p style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: '1.5rem', fontWeight: '500' }}>
                   As Administrator, you have privileges to cancel this user's booking.
@@ -363,7 +593,7 @@ const SeatMap = ({ setCurrentView }) => {
                   <button 
                     className="btn btn-secondary" 
                     style={{ flex: 1 }}
-                    onClick={() => { setSelectedSeat(null); setModalType(''); }}
+                    onClick={() => { setSelectedSeat(null); setModalType(''); setSelectedShift('full'); }}
                   >
                     Back
                   </button>
@@ -372,6 +602,47 @@ const SeatMap = ({ setCurrentView }) => {
             )}
           </div>
         </div>
+      )}
+
+      {/* Tooltip Portal */}
+      {tooltipPos.visible && tooltipSeat && typeof document !== 'undefined' && createPortal(
+        <div className="seat-tooltip" style={{ position: 'absolute', top: tooltipPos.top + 'px', left: tooltipPos.left + 'px', transform: 'translate(-50%, -120%)', pointerEvents: 'none', zIndex: 9999 }}>
+          <div className="tooltip-title">Seat {tooltipSeat.row}{tooltipSeat.number}</div>
+          <div className="tooltip-row">
+            <span>Status:</span>
+            <span className="tooltip-val" style={{ color: getSeatStatus(tooltipSeat) === 'Available' ? '#34d399' : '#f87171' }}>
+              {getSeatStatus(tooltipSeat)}
+            </span>
+          </div>
+          {['morning', 'evening'].map((shift) => {
+            const isBooked = (tooltipSeat.bookedShifts || []).includes(shift) || (tooltipSeat.bookedShifts || []).includes('full');
+            const booking = tooltipSeat.bookedBy?.[shift];
+            const bookedAt = tooltipSeat.bookedAt?.[shift];
+            return (
+              <div key={shift} style={{ marginTop: shift === 'morning' ? '0.6rem' : '0.35rem' }}>
+                <div className="tooltip-row" style={{ fontWeight: 600, color: '#f8fafc' }}>
+                  <span>{shiftLabel[shift]}:</span>
+                  <span className="tooltip-val" style={{ color: isBooked ? '#f87171' : '#34d399' }}>
+                    {isBooked ? 'Booked' : 'Available'}
+                  </span>
+                </div>
+                {user && isBooked ? (
+                  <>
+                    <div className="tooltip-row" style={{ marginTop: '0.15rem' }}>
+                      <span>{booking?.id === user?.id ? 'User' : 'Name'}:</span>
+                      <span className="tooltip-val">{booking?.id === user?.id ? 'You' : booking?.name || 'Reserved'}</span>
+                    </div>
+                    <div className="tooltip-row" style={{ marginTop: '0.15rem' }}>
+                      <span>Booked at:</span>
+                      <span className="tooltip-val">{bookedAt ? formatBookingTime(bookedAt) : 'Unknown'}</span>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>,
+        document.body
       )}
     </div>
   );

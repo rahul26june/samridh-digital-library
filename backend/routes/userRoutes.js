@@ -2,14 +2,15 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { getUsers, saveUsers, getSeats, saveSeats } from '../utils/db.js';
 import { protect, admin } from '../middleware/auth.js';
+import { validateAdminUser, validateProfileUpdate } from '../utils/validators.js';
 
 const router = express.Router();
 
 // @desc    Update user profile (logged-in user edits their own profile, phone is read-only)
 // @route   PUT /api/users/profile
 // @access  Private
-router.put('/profile', protect, (req, res) => {
-  const users = getUsers();
+router.put('/profile', protect, async (req, res) => {
+  const users = await getUsers();
   const index = users.findIndex(u => u.id === req.user.id);
 
   if (index === -1) {
@@ -17,19 +18,24 @@ router.put('/profile', protect, (req, res) => {
   }
 
   const { name, email, password } = req.body;
-  const user = users[index];
+  const validation = validateProfileUpdate(name, email, password);
+  if (!validation.valid) {
+    return res.status(400).json({ message: validation.message, errors: validation.errors });
+  }
 
-  // Update properties (phone is explicitly omitted and cannot be changed by user)
-  if (name) user.name = name;
-  if (email !== undefined) user.email = email;
+  const user = users[index];
+  const { cleanData } = validation;
+
+  if (cleanData.name !== undefined) user.name = cleanData.name;
+  if (cleanData.email !== undefined) user.email = cleanData.email;
   
-  if (password) {
+  if (cleanData.password) {
     const salt = bcrypt.genSaltSync(10);
-    user.password = bcrypt.hashSync(password, salt);
+    user.password = bcrypt.hashSync(cleanData.password, salt);
   }
 
   users[index] = user;
-  saveUsers(users);
+  await saveUsers(users);
 
   res.json({
     id: user.id,
@@ -46,9 +52,8 @@ router.put('/profile', protect, (req, res) => {
 // @desc    Get all users
 // @route   GET /api/users
 // @access  Private/Admin
-router.get('/', protect, admin, (req, res) => {
-  const users = getUsers();
-  // Strip passwords before returning
+router.get('/', protect, admin, async (req, res) => {
+  const users = await getUsers();
   const cleanUsers = users.map(({ password, ...userWithoutPassword }) => userWithoutPassword);
   res.json(cleanUsers);
 });
@@ -56,35 +61,37 @@ router.get('/', protect, admin, (req, res) => {
 // @desc    Create a user (by Admin, auto-approved)
 // @route   POST /api/users
 // @access  Private/Admin
-router.post('/', protect, admin, (req, res) => {
+router.post('/', protect, admin, async (req, res) => {
   const { name, phone, email, password, role, isApproved } = req.body;
 
-  if (!name || !phone || !password) {
-    return res.status(400).json({ message: 'Please provide name, phone number, and password' });
+  const validation = validateAdminUser(name, phone, email, password, true);
+  if (!validation.valid) {
+    return res.status(400).json({ message: validation.message, errors: validation.errors });
   }
 
-  const users = getUsers();
-  const userExists = users.find(u => u.phone === phone);
+  const { cleanData } = validation;
+  const users = await getUsers();
+  const userExists = users.find(u => u.phone === cleanData.phone);
   if (userExists) {
-    return res.status(400).json({ message: 'A user with this phone number already exists' });
+    return res.status(400).json({ message: 'A user with this phone number already exists', errors: { phone: 'This phone number is already registered' } });
   }
 
   const salt = bcrypt.genSaltSync(10);
-  const hashedPassword = bcrypt.hashSync(password, salt);
+  const hashedPassword = bcrypt.hashSync(cleanData.password, salt);
 
   const newUser = {
     id: 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-    name,
-    phone,
-    email: email || '',
+    name: cleanData.name,
+    phone: cleanData.phone,
+    email: cleanData.email,
     password: hashedPassword,
     role: role || 'user',
-    isApproved: isApproved !== undefined ? isApproved : true, // Admin-created defaults to approved
+    isApproved: isApproved !== undefined ? isApproved : true,
     createdAt: new Date().toISOString()
   };
 
   users.push(newUser);
-  saveUsers(users);
+  await saveUsers(users);
 
   const { password: _, ...createdUser } = newUser;
   res.status(201).json(createdUser);
@@ -93,8 +100,8 @@ router.post('/', protect, admin, (req, res) => {
 // @desc    Update a user (by Admin)
 // @route   PUT /api/users/:id
 // @access  Private/Admin
-router.put('/:id', protect, admin, (req, res) => {
-  const users = getUsers();
+router.put('/:id', protect, admin, async (req, res) => {
+  const users = await getUsers();
   const index = users.findIndex(u => u.id === req.params.id);
 
   if (index === -1) {
@@ -102,32 +109,36 @@ router.put('/:id', protect, admin, (req, res) => {
   }
 
   const { name, phone, email, password, role, isApproved } = req.body;
-  const user = users[index];
-
-  // Admin can change phone, check for duplicates if it's changing
-  if (phone && phone !== user.phone) {
-    const phoneExists = users.find(u => u.phone === phone);
-    if (phoneExists) {
-      return res.status(400).json({ message: 'Phone number already in use by another user' });
-    }
-    user.phone = phone;
+  const validation = validateAdminUser(name, phone, email, password, false);
+  if (!validation.valid) {
+    return res.status(400).json({ message: validation.message, errors: validation.errors });
   }
 
-  if (name) user.name = name;
-  if (email !== undefined) user.email = email;
+  const user = users[index];
+  const { cleanData } = validation;
+
+  if (cleanData.phone && cleanData.phone !== user.phone) {
+    const phoneExists = users.find(u => u.phone === cleanData.phone);
+    if (phoneExists) {
+      return res.status(400).json({ message: 'Phone number already in use by another user', errors: { phone: 'Phone number already in use by another user' } });
+    }
+    user.phone = cleanData.phone;
+  }
+
+  if (cleanData.name !== undefined) user.name = cleanData.name;
+  if (cleanData.email !== undefined) user.email = cleanData.email;
   if (role) user.role = role;
   if (isApproved !== undefined) user.isApproved = isApproved;
 
-  if (password) {
+  if (cleanData.password) {
     const salt = bcrypt.genSaltSync(10);
-    user.password = bcrypt.hashSync(password, salt);
+    user.password = bcrypt.hashSync(cleanData.password, salt);
   }
 
   users[index] = user;
-  saveUsers(users);
+  await saveUsers(users);
 
-  // If role or approval changes, or phone changes, update booking copies of this user in seats
-  const seats = getSeats();
+  const seats = await getSeats();
   let seatsUpdated = false;
   seats.forEach(seat => {
     if (seat.bookedBy && seat.bookedBy.id === user.id) {
@@ -141,7 +152,7 @@ router.put('/:id', protect, admin, (req, res) => {
     }
   });
   if (seatsUpdated) {
-    saveSeats(seats);
+    await saveSeats(seats);
   }
 
   const { password: _, ...updatedUser } = user;
@@ -151,8 +162,8 @@ router.put('/:id', protect, admin, (req, res) => {
 // @desc    Approve a pending user
 // @route   PUT /api/users/:id/approve
 // @access  Private/Admin
-router.put('/:id/approve', protect, admin, (req, res) => {
-  const users = getUsers();
+router.put('/:id/approve', protect, admin, async (req, res) => {
+  const users = await getUsers();
   const index = users.findIndex(u => u.id === req.params.id);
 
   if (index === -1) {
@@ -160,7 +171,7 @@ router.put('/:id/approve', protect, admin, (req, res) => {
   }
 
   users[index].isApproved = true;
-  saveUsers(users);
+  await saveUsers(users);
 
   res.json({ message: 'User approved successfully' });
 });
@@ -168,25 +179,22 @@ router.put('/:id/approve', protect, admin, (req, res) => {
 // @desc    Delete user
 // @route   DELETE /api/users/:id
 // @access  Private/Admin
-router.delete('/:id', protect, admin, (req, res) => {
-  const users = getUsers();
+router.delete('/:id', protect, admin, async (req, res) => {
+  const users = await getUsers();
   const userToDelete = users.find(u => u.id === req.params.id);
 
   if (!userToDelete) {
     return res.status(404).json({ message: 'User not found' });
   }
 
-  // Prevent admin from deleting themselves
   if (userToDelete.id === req.user.id || userToDelete.phone === req.user.phone) {
     return res.status(400).json({ message: 'You cannot delete your own admin account' });
   }
 
-  // Delete the user
   const updatedUsers = users.filter(u => u.id !== req.params.id);
-  saveUsers(updatedUsers);
+  await saveUsers(updatedUsers);
 
-  // Release any seats booked by this user
-  const seats = getSeats();
+  const seats = await getSeats();
   let seatsUpdated = false;
   seats.forEach(seat => {
     if (seat.bookedBy && seat.bookedBy.id === req.params.id) {
@@ -198,7 +206,7 @@ router.delete('/:id', protect, admin, (req, res) => {
   });
 
   if (seatsUpdated) {
-    saveSeats(seats);
+    await saveSeats(seats);
   }
 
   res.json({ message: 'User and their bookings deleted successfully' });

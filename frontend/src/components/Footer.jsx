@@ -8,7 +8,7 @@ const Footer = () => {
         <div style={styles.leftCol}>
           <div style={styles.logo}>
             <Armchair size={20} style={styles.logoIcon} />
-            <span style={styles.logoText}>Samridh<span style={styles.logoAccent}> Digital Library</span></span>
+            <span style={styles.logoText}>Samridh <span style={styles.logoAccent}> Digital Library</span></span>
           </div>
           <p style={styles.tagline}>Advanced Library & Workspace Management System</p>
         </div>
@@ -16,7 +16,7 @@ const Footer = () => {
         <div style={styles.rightCol}>
           <div style={styles.techBadge}>
             <Sparkles size={14} style={{ color: '#fbbf24' }} />
-            <span>GITI</span>
+            <span>GITI</span> 
           </div>
           <div style={styles.copyright}>
             &copy; {new Date().getFullYear()} Glorious Industrial Training Institute Inc. All rights reserved.

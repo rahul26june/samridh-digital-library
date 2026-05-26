@@ -59,7 +59,12 @@ export const AuthProvider = ({ children }) => {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.message || 'Registration failed');
+        // If backend returns field-specific errors, throw them
+        const error = new Error(data.message || 'Registration failed');
+        if (data.errors) {
+          error.fieldErrors = data.errors;
+        }
+        throw error;
       }
 
       return data.message;

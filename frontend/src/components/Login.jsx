@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { validateLogin } from '../utils/validators.js';
 import { LogIn, Key, Phone, AlertCircle } from 'lucide-react';
 
 const Login = ({ setCurrentView }) => {
@@ -8,20 +9,23 @@ const Login = ({ setCurrentView }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errMessage, setErrMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!phone || !password) {
-      setErrMessage('Please enter both phone number and password');
+    const validation = validateLogin(phone, password);
+    if (!validation.valid) {
+      setFieldErrors(validation.errors);
+      setErrMessage('Please fix the highlighted fields.');
       return;
     }
 
+    setFieldErrors({});
     setErrMessage('');
     setLoading(true);
 
     try {
-      const user = await login(phone, password);
-      // Success! Move to map or admin panel
+      const user = await login(phone.trim(), password);
       if (user.role === 'admin') {
         setCurrentView('admin');
       } else {
@@ -54,13 +58,24 @@ const Login = ({ setCurrentView }) => {
           <input
             type="text"
             id="login-phone"
-            className="form-control"
+            className={`form-control ${fieldErrors.phone ? 'input-error' : ''}`}
             placeholder="e.g. 1234567890"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) => {
+              setPhone(e.target.value);
+              if (fieldErrors.phone) {
+                setFieldErrors(prev => ({ ...prev, phone: '' }));
+              }
+            }}
             required
             disabled={loading}
           />
+          {fieldErrors.phone && (
+            <div className="field-error">
+              <AlertCircle size={14} style={{ marginRight: '4px' }} />
+              {fieldErrors.phone}
+            </div>
+          )}
         </div>
 
         <div className="form-group" style={{ marginBottom: '2rem' }}>
@@ -71,13 +86,24 @@ const Login = ({ setCurrentView }) => {
           <input
             type="password"
             id="login-password"
-            className="form-control"
+            className={`form-control ${fieldErrors.password ? 'input-error' : ''}`}
             placeholder="••••••••"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (fieldErrors.password) {
+                setFieldErrors(prev => ({ ...prev, password: '' }));
+              }
+            }}
             required
             disabled={loading}
           />
+          {fieldErrors.password && (
+            <div className="field-error">
+              <AlertCircle size={14} style={{ marginRight: '4px' }} />
+              {fieldErrors.password}
+            </div>
+          )}
         </div>
 
         <button

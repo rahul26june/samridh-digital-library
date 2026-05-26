@@ -8,8 +8,8 @@ import seatRoutes from './routes/seatRoutes.js';
 
 dotenv.config();
 
-// Initialize JSON database (creates data directory and seeds default data)
-initDB();
+// Initialize database backend (JSON fallback or PostgreSQL)
+await initDB();
 
 const app = express();
 
